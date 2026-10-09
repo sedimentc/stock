@@ -122,6 +122,10 @@ public interface HistoricalStocksInfoMapper {
     @Select("SELECT ticker_symbol as tickerSymbol,ticker_name as tickerName, dividends_data as dividendsData  FROM historical_stocks_info  ")
     List<HistoricalStocksInfo> findAllDividendsData();
 
+    @Select("SELECT ticker_symbol as tickerSymbol,ticker_name as tickerName, dividends_data as dividendsData, " +
+            "daily_dividends as dailyDividends FROM historical_stocks_info")
+    List<HistoricalStocksInfo> findAllDividendPayloads();
+
     @Select("SELECT ticker_symbol as tickerSymbol,ticker_name as tickerName, daily_dividends as DailyDividends  FROM historical_stocks_info  ")
     List<HistoricalStocksInfo> findAllDailyDividends();
 
@@ -137,6 +141,18 @@ public interface HistoricalStocksInfoMapper {
             "dividends_data = VALUES(dividends_data) " +
             "</script>")
     void batchInsertOrUpdateDividendsData(List<HistoricalStocksInfo> infos);
+
+    @Insert("<script>" +
+            "INSERT INTO historical_stocks_info (ticker_symbol, dividends_data, daily_dividends) " +
+            "VALUES " +
+            "<foreach collection='list' item='info' index='index' open='(' separator='), (' close=')'>" +
+            "#{info.tickerSymbol}, #{info.dividendsData}, #{info.dailyDividends} " +
+            "</foreach> " +
+            "ON DUPLICATE KEY UPDATE " +
+            "dividends_data = COALESCE(VALUES(dividends_data), dividends_data), " +
+            "daily_dividends = COALESCE(VALUES(daily_dividends), daily_dividends) " +
+            "</script>")
+    void batchInsertOrUpdateDividendPayloads(List<HistoricalStocksInfo> infos);
 
 
     @Insert("<script>" +

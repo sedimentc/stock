@@ -88,8 +88,9 @@ public class StockInfoService {
      */
     public final static Map<String, String> ALL_TICKER_SYMBOL_MAP_2 = new HashMap<>();
 
-    private static final String TOKEN = "0bdf3baa700b2560364af43c4e6fff06fccf601ce4320bf390314f52";
+    private static final String TOKEN = "REDACTED_TUSHARE_TOKEN";
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final String COMPLETED_DIVIDEND_YEARS_KEY = "_completedYears";
 
 
     @Resource
@@ -869,10 +870,16 @@ public class StockInfoService {
             }
             //每季度分红的股息
             JSONObject dailyDividendsJson = DAILY_DIVIDENDS_CACHE_MAP.get(tickerSymbolNew);
+            if (dailyDividendsJson == null) {
+                dailyDividendsJson = new JSONObject();
+            }
             //2000-2024年 净资产 key 2024  key q1-q4 val 对应季度的金额总量
             JSONObject bvpsDataJson = BVPS_DATA_CACHE_MAP.get(tickerSymbolNew);
             //派息日对应的 派息日期的派息详情
             JSONObject dividendsDataJson = DIVIDENDS_DATA_CACHE_MAP.get(tickerSymbolNew);
+            if (dividendsDataJson == null) {
+                dividendsDataJson = new JSONObject();
+            }
 
             Map<String, DailyVo> groupedByTradeDate = dailyVoList.stream().collect(Collectors.toMap(DailyVo::getTradeDate,
                     dailyVo -> dailyVo, (existing, replacement) -> existing));
@@ -1065,7 +1072,8 @@ public class StockInfoService {
                 if (announceDate != null) {
                     if (Long.parseLong(tradeDate) >= announceDate) {
                         // 使用实际公布数据进行计算
-                        BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap);
+                        BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap, close,
+                                dailyDividendsJson);
 
                         BigDecimal pbRatio = calculatePbRatio(dateNow, bvpsDataJson, totalShare, marketCap);
 
@@ -1073,7 +1081,8 @@ public class StockInfoService {
                                 latestDisclosedQuarter, dividend, pbRatio));
                     } else {
                         // 交易日期早于公布日期，使用历史数据进行计算
-                        BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap);
+                        BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap, close,
+                                dailyDividendsJson);
                         BigDecimal pbRatio = calculatePbRatio(DateUtils.getPreviousQuarter(dateNow), bvpsDataJson, totalShare,
                                 marketCap);
                         dataAll.add(peRatioTtmInfo(netProfitCacheMap, grossRevenueMap, tradeDate, close, totalShare, marketCap,
@@ -1081,7 +1090,8 @@ public class StockInfoService {
                     }
                 } else {
                     // 没有公布日期的情况下，使用历史数据进行计算
-                    BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap);
+                    BigDecimal dividend = calculateDividend(tradeDate, dividendAmountMap, marketCap, close,
+                            dailyDividendsJson);
                     BigDecimal pbRatio = calculatePbRatio(DateUtils.getPreviousQuarter(dateNow), bvpsDataJson, totalShare,
                             marketCap);
                     dataAll.add(peRatioTtmInfo(netProfitCacheMap, grossRevenueMap, tradeDate, close, totalShare, marketCap,
@@ -1309,7 +1319,70 @@ public class StockInfoService {
         return jsonArrayMap;
     }
 
-    private BigDecimal calculateDividend(String tradeDate, Map<String, JSONArray> dividendAmountMap, BigDecimal marketCap) {
+    private BigDecimal calculateDividend(String tradeDate, Map<String, JSONArray> dividendAmountMap,
+                                         BigDecimal marketCap, BigDecimal close,
+                                         JSONObject dailyDividendsJson) {
+        if (dailyDividendsJson != null && dailyDividendsJson.containsKey(COMPLETED_DIVIDEND_YEARS_KEY)) {
+            return calculateCompletedYearDividend(tradeDate, close,
+                    dailyDividendsJson.getJSONObject(COMPLETED_DIVIDEND_YEARS_KEY));
+        }
+        return calculateLegacyDividend(tradeDate, dividendAmountMap, marketCap);
+    }
+
+    /**
+     * Completed-fiscal-year dividend yield.
+     *
+     * Each metadata entry contains the fiscal year, its completion date and
+     * the implemented annual cash amount per share.  The applicable numerator
+     * is the latest fiscal year completed on or before the trading date.  Using
+     * per-share cash divided by the same day's close avoids A/H-share and
+     * repurchase-scope mismatches between a total cash amount and market cap.
+     */
+    private BigDecimal calculateCompletedYearDividend(String tradeDate, BigDecimal close,
+                                                       JSONObject completedYearsJson) {
+        if (completedYearsJson == null || completedYearsJson.isEmpty()
+                || close == null || close.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO;
+        }
+
+        String selectedCompletionDate = null;
+        int selectedYear = Integer.MIN_VALUE;
+        BigDecimal selectedCashPerShare = BigDecimal.ZERO;
+        for (Map.Entry<String, Object> entry : completedYearsJson.entrySet()) {
+            JSONObject completedYear = completedYearsJson.getJSONObject(entry.getKey());
+            if (completedYear == null) {
+                continue;
+            }
+            String completionDate = completedYear.getString("completionDate");
+            BigDecimal cashPerShare = completedYear.getBigDecimal("cashPerShare");
+            int fiscalYear;
+            try {
+                fiscalYear = Integer.parseInt(entry.getKey());
+                LocalDate.parse(completionDate, DATE_FORMATTER);
+            } catch (RuntimeException invalidMetadata) {
+                log.warn("忽略无效的年度分红完成元数据: year={}, data={}", entry.getKey(), completedYear);
+                continue;
+            }
+            if (cashPerShare == null || cashPerShare.compareTo(BigDecimal.ZERO) < 0
+                    || completionDate.compareTo(tradeDate) > 0) {
+                continue;
+            }
+            if (selectedCompletionDate == null
+                    || completionDate.compareTo(selectedCompletionDate) > 0
+                    || (completionDate.equals(selectedCompletionDate) && fiscalYear > selectedYear)) {
+                selectedCompletionDate = completionDate;
+                selectedYear = fiscalYear;
+                selectedCashPerShare = cashPerShare;
+            }
+        }
+        if (selectedCompletionDate == null) {
+            return BigDecimal.ZERO;
+        }
+        return selectedCashPerShare.divide(close, 6, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal calculateLegacyDividend(String tradeDate, Map<String, JSONArray> dividendAmountMap,
+                                               BigDecimal marketCap) {
         LocalDate tradeLocalDate = LocalDate.parse(tradeDate, DATE_FORMATTER);
         LocalDate startDate = tradeLocalDate.minusMonths(14);
         LocalDate endDate = tradeLocalDate.minusDays(1);
@@ -1453,19 +1526,38 @@ public class StockInfoService {
 
     private Map<String, BigDecimal> getDividendsDataJson(List<DailyVo> dailyVoList, JSONObject dividendsDataJson) throws Exception {
         Map<String, BigDecimal> dividendAmountMap = new HashMap<>(); // 存储每个交易日期对应的分红金额
+        if (dailyVoList == null || dailyVoList.size() < 2 || dividendsDataJson == null) {
+            return dividendAmountMap;
+        }
         // 遍历每日数据列表
         for (int i = 0; i < dailyVoList.size() - 1; i++) {
             //派息日前一天的收盘价格是x，10股派息了m元（比如财报10股派息0.35元，这里m就等于0.35），标注派息日这个时间点的系数p=x/（x-m/10）
             //派息日前一天的价格是x，10股转a股派b股派m元（比如财报10股派息0.35元，这里m就等于0.35），标注派息日这个时间点的系数p=【x/（x-m/10）】*【（10+a+b）/10】
             String tradeDate = dailyVoList.get(i).getTradeDate(); // 获取交易日期
             BigDecimal x = dailyVoList.get(i + 1).getClose();
+            if (tradeDate == null || x == null) {
+                continue;
+            }
             JSONArray dividend = dividendsDataJson.getJSONArray(tradeDate);
             if (dividend != null && dividend.size() > 0) {
                 for (int j = 0; j < dividend.size(); j++) {
                     JSONObject jsonObject = dividend.getJSONObject(j);
+                    if (jsonObject == null) {
+                        continue;
+                    }
                     BigDecimal a = jsonObject.getBigDecimal("a");
                     BigDecimal b = jsonObject.getBigDecimal("b");
                     BigDecimal m = jsonObject.getBigDecimal("m");
+                    // a/b 缺失表示没有送股/转增；m 缺失则无法计算现金分红，跳过该条异常记录。
+                    if (a == null) {
+                        a = BigDecimal.ZERO;
+                    }
+                    if (b == null) {
+                        b = BigDecimal.ZERO;
+                    }
+                    if (m == null) {
+                        continue;
+                    }
                     // 默认算法: p = x / (x - m / 10)
                     BigDecimal ten = new BigDecimal("10");
                     BigDecimal mDiv10 = m.divide(ten, 4, RoundingMode.HALF_UP);

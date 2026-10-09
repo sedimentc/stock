@@ -54,7 +54,7 @@ public class StockInfoTask {
     @Resource
     UsStockInfoMapper usStockInfoMapper;
 
-    private static final String TOKEN = "0bdf3baa700b2560364af43c4e6fff06fccf601ce4320bf390314f52";
+    private static final String TOKEN = "REDACTED_TUSHARE_TOKEN";
 
     @PostConstruct
     public void initStockInfo() {

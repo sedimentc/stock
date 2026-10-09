@@ -1,0 +1,25 @@
+# 交接示例配置：仅用于说明字段，不包含生产凭据。
+# 实际部署必须从受控密钥存储或环境变量注入。
+spring:
+  datasource:
+    source1:
+      url: jdbc:mysql://${DB1_HOST}:${DB1_PORT}/${DB1_NAME}
+      username: ${DB1_USER}
+      password: ${DB1_PASSWORD}
+    source2:
+      url: jdbc:mysql://${DB2_HOST}:${DB2_PORT}/${DB2_NAME}
+      username: ${DB2_USER}
+      password: ${DB2_PASSWORD}
+  redis:
+    host: ${REDIS_HOST}
+    port: ${REDIS_PORT}
+    database: ${REDIS_DATABASE}
+    password: ${REDIS_PASSWORD}
+
+application:
+  sms:
+    appKey: ${SMS_APP_KEY}
+    secret: ${SMS_SECRET}
+
+oklink:
+  apikey: ${OKLINK_API_KEY}

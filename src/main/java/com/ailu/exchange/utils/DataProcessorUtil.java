@@ -178,7 +178,7 @@ public class DataProcessorUtil {
     public static void main(String[] args) {
 
         String apiUrl = "http://api.tushare.pro";
-        String requestBody = "{\"api_name\": \"daily\", \"token\": \"0bdf3baa700b2560364af43c4e6fff06fccf601ce4320bf390314f52" +
+        String requestBody = "{\"api_name\": \"daily\", \"token\": \"REDACTED_TUSHARE_TOKEN" +
                 "\", \"params\": {\"ts_code\":\"600519.SH\"}}";
         String textFilePath = "D:\\all\\data.txt";
         String zipFilePath = "D:\\all\\data.zip";

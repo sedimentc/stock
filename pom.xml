@@ -24,7 +24,22 @@
         <java.version>1.8</java.version>
         <okhttp3.version>3.10.0</okhttp3.version>
         <retrofit2.version>2.3.0</retrofit2.version>
+        <skipTests>true</skipTests>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>project-vendor</id>
+            <url>file://${project.basedir}/vendor-maven</url>
+            <releases>
+                <enabled>true</enabled>
+                <checksumPolicy>fail</checksumPolicy>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <dependencies>
 
@@ -100,6 +115,13 @@
         </dependency>
 
         <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.0.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
             <groupId>com.ailu.paas</groupId>
             <artifactId>notice-client</artifactId>
             <version>2.1-RELEASE</version>
@@ -138,7 +160,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <skip>true</skip>
+                    <skip>${skipTests}</skip>
                 </configuration>
             </plugin>
         </plugins>

@@ -171,6 +171,15 @@ public interface StockInfoMapper {
     @SelectProvider(type = StockSqlProvider.class, method = "findAll")
     List<StockInfo> findAll();
 
+    /**
+     * Import-only lookup that must preserve the exchange suffix. The regular
+     * findAll() intentionally exposes bare six-digit codes for runtime callers.
+     */
+    @Select("SELECT ticker_symbol AS tickerSymbol, " +
+            "avg_dividend_yield_3yr AS avgDividendYield3yr, " +
+            "capital_changes AS capitalChanges FROM stock_info")
+    List<StockInfo> findAllForImportPreserve();
+
     // where  ticker_symbol='600926.SH'
     @Select("SELECT ticker_symbol as tickerSymbol ,ticker_name as tickerName  FROM `stock_info`  ")
     List<StockInfo> getAllTickerSymbol();
