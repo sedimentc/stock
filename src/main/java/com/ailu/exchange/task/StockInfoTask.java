@@ -15,6 +15,9 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import retrofit2.http.POST;
@@ -33,7 +36,7 @@ import java.util.stream.IntStream;
 
 @Slf4j
 @Component
-public class StockInfoTask {
+public class StockInfoTask implements ApplicationRunner {
     @Resource
     StockInfoService stockInfoService;
     @Resource
@@ -55,6 +58,9 @@ public class StockInfoTask {
     UsStockInfoMapper usStockInfoMapper;
 
     private static final String TOKEN = "REDACTED_TUSHARE_TOKEN";
+
+    @Value("${backfill.dates:}")
+    private String backfillDates;
 
     @PostConstruct
     public void initStockInfo() {
@@ -118,10 +124,51 @@ public class StockInfoTask {
 //    @Scheduled(initialDelay = 1000L, fixedDelay = 10 * 60 * 60 * 1000L)
     public void updateKxianData() {
         String currentDateStr = DateUtils.getCurrentDateStr();
+        List<String> list = DateUtils.generateDateRange(currentDateStr, currentDateStr);
+        runDailyKxianUpdate(list, true);
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        if (StringUtils.isBlank(backfillDates)) {
+            return;
+        }
+        List<String> dates = Arrays.stream(backfillDates.split(","))
+                .map(String::trim)
+                .filter(s -> s.matches("\\d{8}"))
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+        if (dates.isEmpty()) {
+            log.info("backfill.dates 格式不正确, 期望逗号分隔的yyyyMMdd: {}", backfillDates);
+            return;
+        }
+        log.info("开始历史行情回填, 交易日列表: {}", dates);
+        for (String tradeDate : dates) {
+            String markerPath = "/home/tomcat/aShare_data/.backfill_" + tradeDate + ".done";
+            if (new File(markerPath).exists()) {
+                log.info("交易日 {} 已回填过, 跳过", tradeDate);
+                continue;
+            }
+            try {
+                runDailyKxianUpdate(DateUtils.generateDateRange(tradeDate, tradeDate), false);
+            } catch (Exception e) {
+                log.error("回填交易日 {} 出现异常, 中止剩余回填", tradeDate, e);
+                return;
+            }
+            DataProcessorUtil.writeToFile(markerPath, tradeDate);
+            log.info("完成回填交易日 {}", tradeDate);
+        }
+        log.info("历史行情回填完成, 执行一次完整流程刷新港美股并写date.txt");
+        runDailyKxianUpdate(Collections.emptyList(), true);
+        log.info("回填收尾完成");
+    }
+
+    private void runDailyKxianUpdate(List<String> list, boolean runHkUsAndWriteDate) {
+        String currentDateStr = DateUtils.getCurrentDateStr();
         long startTime = System.currentTimeMillis();
         String filePath = "/home/tomcat/aShare_data/date.txt";
         log.info("开始同步每日最新的股票价格 开始时间:{},日期:{}", startTime, currentDateStr);
-        List<String> list = DateUtils.generateDateRange(currentDateStr, currentDateStr);
         // 使用 HashMap 进行分组
         Map<String, List<JSONArray>> groupedDailyMap = new HashMap<>();
         Map<String, List<JSONArray>> groupedDailyBasicMap = new HashMap<>();
@@ -148,34 +195,38 @@ public class StockInfoTask {
             log.info("结束更新  A股 股票历史信息");
         }
 
+        if (runHkUsAndWriteDate) {
 //        获取港股现有股票代码
-        List<StockInfo> hkAllTickerSymbol = hkStockInfoMapper.getAllTickerSymbolNew();
-        Map<String, JSONObject> closePriceMap = getClosePriceMap();
-        if (closePriceMap.size() > 0) {
-            log.info("获取的港股股票信息长度:{}", closePriceMap.size());
-            List<StockInfo> hkStockInfos = getHkStockInfos(closePriceMap, hkAllTickerSymbol);
-            if (hkStockInfos.size() > 0) {
-                hkStockInfoMapper.batchInsertNew3(hkStockInfos);
+            List<StockInfo> hkAllTickerSymbol = hkStockInfoMapper.getAllTickerSymbolNew();
+            Map<String, JSONObject> closePriceMap = getClosePriceMap();
+            if (closePriceMap.size() > 0) {
+                log.info("获取的港股股票信息长度:{}", closePriceMap.size());
+                List<StockInfo> hkStockInfos = getHkStockInfos(closePriceMap, hkAllTickerSymbol);
+                if (hkStockInfos.size() > 0) {
+                    hkStockInfoMapper.batchInsertNew3(hkStockInfos);
+                }
+                log.info("开始更新 港股 股票历史信息");
+                hkStockInfoService.cacheHistoricalStocksInfo();
+                log.info("结束更新  港股 股票历史信息");
             }
-            log.info("开始更新 港股 股票历史信息");
-            hkStockInfoService.cacheHistoricalStocksInfo();
-            log.info("结束更新  港股 股票历史信息");
-        }
-        List<StockInfo> allTickerSymbolNew = usStockInfoMapper.getAllTickerSymbolNew();
-        Map<String, JSONObject> usClosePriceMap = getUsClosePriceMap();
-        if (usClosePriceMap.size() > 0) {
-            log.info("获取的美股股票信息长度:{}", usClosePriceMap.size());
-            List<StockInfo> usStockInfos = getUsStockInfos(usClosePriceMap, allTickerSymbolNew);
-            if (usStockInfos.size() > 0) {
-                usStockInfoMapper.batchInsertNew3(usStockInfos);
+            List<StockInfo> allTickerSymbolNew = usStockInfoMapper.getAllTickerSymbolNew();
+            Map<String, JSONObject> usClosePriceMap = getUsClosePriceMap();
+            if (usClosePriceMap.size() > 0) {
+                log.info("获取的美股股票信息长度:{}", usClosePriceMap.size());
+                List<StockInfo> usStockInfos = getUsStockInfos(usClosePriceMap, allTickerSymbolNew);
+                if (usStockInfos.size() > 0) {
+                    usStockInfoMapper.batchInsertNew3(usStockInfos);
+                }
+                log.info("开始更新 美股 股票历史信息");
+                hkStockInfoService.cacheHistoricalStocksInfo();
+                log.info("结束更新 美股 股票历史信息");
             }
-            log.info("开始更新 美股 股票历史信息");
-            hkStockInfoService.cacheHistoricalStocksInfo();
-            log.info("结束更新 美股 股票历史信息");
         }
 
         log.info("结束同步每日最新的股票价格 结束用时:{}", System.currentTimeMillis() - startTime);
-        DataProcessorUtil.writeToFile(filePath, currentDateStr);
+        if (runHkUsAndWriteDate) {
+            DataProcessorUtil.writeToFile(filePath, currentDateStr);
+        }
     }
 
     private void getDataInfo(List<String> list, Map<String, List<JSONArray>> groupedDailyMap,
@@ -192,7 +243,8 @@ public class StockInfoTask {
                     groupedDailyMap.computeIfAbsent(key, k -> new ArrayList<>()).add(innerArray);
                 });
             } else {
-                log.info("获取daily接口数据出现异常！！{}", tradeDate);
+                log.info("获取daily接口数据出现异常！！{} code={} msg={}", tradeDate,
+                        jsonObjectDaily.getInteger("code"), jsonObjectDaily.getString("msg"));
             }
             JSONObject jsonObjectDailyBasic = getJsonObject("daily_basic", tradeDate);
             if (jsonObjectDailyBasic.getInteger("code").equals(0)) {
@@ -205,7 +257,8 @@ public class StockInfoTask {
                     groupedDailyBasicMap.computeIfAbsent(key, k -> new ArrayList<>()).add(innerArray);
                 });
             } else {
-                log.info("获取daily_basic接口数据出现异常！！{}", tradeDate);
+                log.info("获取daily_basic接口数据出现异常！！{} code={} msg={}", tradeDate,
+                        jsonObjectDailyBasic.getInteger("code"), jsonObjectDailyBasic.getString("msg"));
             }
         }
     }
@@ -224,7 +277,8 @@ public class StockInfoTask {
                 totalShareDataMap.put(processString(key) + ".HK", totalShare);
             });
         } else {
-            log.info("获取hk_daily_adj接口数据出现异常！！{}", tradeDate);
+            log.info("获取hk_daily_adj接口数据出现异常！！{} code={} msg={}", tradeDate,
+                    jsonObjectDaily.getInteger("code"), jsonObjectDaily.getString("msg"));
         }
     }
 
