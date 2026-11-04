@@ -10,33 +10,45 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/stockInfo/multiRating")
 public class StockMultiRatingController {
     private static final Set<String> NAMES = new HashSet<>(Arrays.asList("小雷", "小梦", "肖明", "陈纪言", "罗丰越", "杜斌"));
     @Resource private StockMultiRatingMapper mapper;
 
-    @PostMapping("/list")
+    @RequestMapping(value = "/list", method = {RequestMethod.GET, RequestMethod.POST})
     public Object list() {
         try { return WebResult.okResult(mapper.findAll()); }
         catch (Exception e) { return WebResult.failResult("评分读取失败"); }
     }
 
-    @PostMapping("/save")
-    public Object save(@RequestBody JSONObject data) {
+    @RequestMapping(value = "/save", method = {RequestMethod.GET, RequestMethod.POST})
+    public Object save(@RequestBody(required = false) JSONObject data,
+                       @RequestParam(value = "tickerSymbol", required = false) String tickerSymbol,
+                       @RequestParam(value = "raterName", required = false) String raterName,
+                       @RequestParam(value = "overallScore", required = false) String overallScore,
+                       @RequestParam(value = "potentialScore", required = false) String potentialScore) {
         try {
-            if (data == null) return WebResult.failResult("请求不能为空");
-            String ticker = data.getString("tickerSymbol");
-            String name = data.getString("raterName");
+            String ticker = data != null ? data.getString("tickerSymbol") : tickerSymbol;
+            String name = data != null ? data.getString("raterName") : raterName;
+            BigDecimal overall = data != null ? data.getBigDecimal("overallScore") : parseScore(overallScore);
+            BigDecimal potential = data != null ? data.getBigDecimal("potentialScore") : parseScore(potentialScore);
             if (ticker == null || !ticker.matches("[A-Za-z0-9.]{1,32}") || !NAMES.contains(name)) return WebResult.failResult("股票代码或评分人无效");
-            BigDecimal overall = data.getBigDecimal("overallScore");
-            BigDecimal potential = data.getBigDecimal("potentialScore");
             if (!valid(overall) || !valid(potential)) return WebResult.failResult("评分必须为0到10，最多一位小数");
             if (overall == null && potential == null) mapper.delete(ticker, name);
             else mapper.save(ticker, name, overall, potential);
             return WebResult.okResult("保存成功");
         } catch (Exception e) { return WebResult.failResult("保存失败，请稍后重试"); }
     }
+
+    private static BigDecimal parseScore(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        if (trimmed.isEmpty() || "null".equalsIgnoreCase(trimmed)) return null;
+        return new BigDecimal(trimmed);
+    }
+
     private boolean valid(BigDecimal value) {
         return value == null || (value.signum() >= 0 && value.compareTo(BigDecimal.TEN) <= 0 && value.stripTrailingZeros().scale() <= 1);
     }
