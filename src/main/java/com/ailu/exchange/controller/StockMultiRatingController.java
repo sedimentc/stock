@@ -13,7 +13,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/stockInfo/multiRating")
 public class StockMultiRatingController {
-    private static final Set<String> NAMES = new HashSet<>(Arrays.asList("小雷", "小梦", "肖明", "陈纪言"));
+    private static final Set<String> NAMES = new HashSet<>(Arrays.asList("小雷", "小梦", "肖明", "陈纪言", "罗丰越", "杜斌"));
     @Resource private StockMultiRatingMapper mapper;
 
     @PostMapping("/list")
